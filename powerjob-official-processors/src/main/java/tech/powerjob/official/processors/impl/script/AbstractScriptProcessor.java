@@ -1,5 +1,6 @@
 package tech.powerjob.official.processors.impl.script;
 
+import tech.powerjob.worker.common.utils.PowerFileUtils;
 import tech.powerjob.worker.core.processor.ProcessResult;
 import tech.powerjob.worker.core.processor.TaskContext;
 import tech.powerjob.worker.log.OmsLogger;
@@ -18,6 +19,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.Set;
 import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.ForkJoinTask;
 
 /**
  * 脚本处理器
@@ -34,7 +36,7 @@ public abstract class AbstractScriptProcessor extends CommonBasicProcessor {
     protected static final String SH_SHELL = "/bin/sh";
     protected static final String CMD_SHELL = "cmd.exe";
 
-    private static final String WORKER_DIR = System.getProperty("user.home") + "/powerjob/worker/official_script_processor/";
+    private static final String WORKER_DIR = PowerFileUtils.workspace() + "/official_script_processor/";
 
     @Override
     protected ProcessResult process0(TaskContext context) throws Exception {
@@ -77,17 +79,23 @@ public abstract class AbstractScriptProcessor extends CommonBasicProcessor {
         String result;
 
         final Charset charset = getCharset();
-        try (InputStream is = process.getInputStream(); InputStream es = process.getErrorStream()) {
+        try {
+            InputStream is = process.getInputStream();
+            InputStream es = process.getErrorStream();
 
-            POOL.execute(() -> copyStream(is, inputBuilder, omsLogger, charset));
-            POOL.execute(() -> copyStream(es, errorBuilder, omsLogger, charset));
+            ForkJoinTask<?> inputSubmit = POOL.submit(() -> copyStream(is, inputBuilder, omsLogger, charset));
+            ForkJoinTask<?> errorSubmit = POOL.submit(() -> copyStream(es, errorBuilder, omsLogger, charset));
 
             success = process.waitFor() == 0;
+
+            // 阻塞等待日志读取
+            inputSubmit.get();
+            errorSubmit.get();
 
         } catch (InterruptedException ie) {
             omsLogger.info("[SYSTEM] ScriptProcessor has been interrupted");
         } finally {
-            result = String.format("[INPUT]: %s;[ERROR]: %s", inputBuilder.toString(), errorBuilder.toString());
+            result = String.format("[INPUT]: %s;[ERROR]: %s", inputBuilder, errorBuilder);
         }
         return new ProcessResult(success, result);
     }
@@ -131,11 +139,11 @@ public abstract class AbstractScriptProcessor extends CommonBasicProcessor {
         return scriptPath;
     }
 
-    private static void copyStream(InputStream is, StringBuilder sb, OmsLogger omsLogger, Charset charset) {
+    private void copyStream(InputStream is, StringBuilder sb, OmsLogger omsLogger, Charset charset) {
         String line;
         try (BufferedReader br = new BufferedReader(new InputStreamReader(is, charset))) {
             while ((line = br.readLine()) != null) {
-                sb.append(line);
+                sb.append(line).append(System.lineSeparator());
                 // 同步到在线日志
                 omsLogger.info(line);
             }
@@ -144,6 +152,13 @@ public abstract class AbstractScriptProcessor extends CommonBasicProcessor {
             omsLogger.warn("[SYSTEM] copyStream failed.", e);
 
             sb.append("Exception: ").append(e);
+        } finally {
+            try {
+                is.close();
+            } catch (IOException e) {
+                log.warn("[ScriptProcessor] close stream failed.", e);
+                omsLogger.warn("[SYSTEM] close stream failed.", e);
+            }
         }
     }
 

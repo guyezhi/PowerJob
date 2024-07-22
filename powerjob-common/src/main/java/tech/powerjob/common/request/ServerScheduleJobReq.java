@@ -1,8 +1,7 @@
 package tech.powerjob.common.request;
 
-import tech.powerjob.common.PowerSerializable;
-import tech.powerjob.common.ProtocolConstant;
 import lombok.Data;
+import tech.powerjob.common.PowerSerializable;
 
 import java.util.List;
 
@@ -99,8 +98,8 @@ public class ServerScheduleJobReq implements PowerSerializable {
      */
     private String logConfig;
 
-    @Override
-    public String path() {
-        return ProtocolConstant.WORKER_PATH_DISPATCH_JOB;
-    }
+    /**
+     * 高级运行时配置
+     */
+    private String advancedRuntimeConfig;
 }
